@@ -85,7 +85,7 @@ class NseCalendar:
         self._events: list[MarketEvent] = []
         self._settings = get_settings()
     
-    async def load_holidays(self, year: int | None = None) -> None:
+    async def refresh_holidays(self, year: int | None = None) -> None:
         """
         Load holidays from NSE API.
         

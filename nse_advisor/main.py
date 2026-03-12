@@ -137,7 +137,10 @@ class NseAdvisor:
         # 9. Fetch first option chain
         logger.info("Fetching initial option chain...")
         chain_manager = get_option_chain_manager()
-        await chain_manager.refresh(settings.primary_underlying)
+        try:
+            await chain_manager.refresh(settings.primary_underlying)
+        except Exception as e:
+            logger.warning(f"Failed to fetch initial option chain: {e}. System will retry in background.")
         
         logger.info("Initialization complete!")
     
@@ -395,21 +398,38 @@ class NseAdvisor:
         while self._running:
             try:
                 if self._is_market_hours():
-                    old_regime = classifier.get_current_regime()
-                    new_regime = await classifier.classify()
+                    # Fetch data for classification
+                    from nse_advisor.data.yfinance_fetcher import get_yfinance_fetcher
+                    from nse_advisor.market.option_chain import get_chain_builder
                     
-                    if old_regime and new_regime and old_regime.regime != new_regime.regime:
-                        from nse_advisor.storage.event_log import log_regime_change
-                        log_regime_change(
-                            old_regime.regime.value,
-                            new_regime.regime.value,
-                            self._settings.primary_underlying,
+                    yf = get_yfinance_fetcher()
+                    builder = get_chain_builder()
+                    
+                    price_data = await yf.backfill_candles(self._settings.primary_underlying, count=50)
+                    chain = builder.get_cached_snapshot(self._settings.primary_underlying)
+                    vix = await yf.fetch_india_vix() if hasattr(yf, 'fetch_india_vix') else 0.0
+                    
+                    if not price_data.empty:
+                        old_regime = classifier.get_current_regime()
+                        new_regime = await asyncio.to_thread(
+                            classifier.classify, 
+                            price_data=price_data,
+                            chain=chain,
+                            vix=vix
                         )
-                        logger.info(
-                            "Regime changed",
-                            old=old_regime.regime.value,
-                            new=new_regime.regime.value,
-                        )
+                        
+                        if old_regime and new_regime and old_regime.regime != new_regime.regime:
+                            from nse_advisor.storage.event_log import log_regime_change
+                            log_regime_change(
+                                old_regime.regime.value,
+                                new_regime.regime.value,
+                                self._settings.primary_underlying,
+                            )
+                            logger.info(
+                                "Regime changed",
+                                old=old_regime.regime.value,
+                                new=new_regime.regime.value,
+                            )
             except Exception as e:
                 logger.error(f"Regime classifier error: {e}")
             

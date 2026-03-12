@@ -81,7 +81,7 @@ class NseFetcher:
     OPTION_CHAIN_INDEX_URL = "/api/option-chain-indices?symbol={symbol}"
     OPTION_CHAIN_EQUITY_URL = "/api/option-chain-equities?symbol={symbol}"
     ALL_INDICES_URL = "/api/allIndices"
-    FO_BAN_LIST_URL = "/api/fo-banlist"
+    FO_BAN_LIST_URL = "/api/equity-stockIndices?index=SECURITIES%20IN%20BAN%20PERIOD"
     HOLIDAY_URL = "/api/holiday-master?type=trading"
     FII_DII_URL = "/api/fiidiiTradeReact"
     CORP_ACTIONS_URL = "/api/corporates-corporateActions?index=equities"
@@ -113,7 +113,8 @@ class NseFetcher:
         
         data = await self._session.fetch(url)
         
-        if "records" not in data:
+        if not data or "records" not in data:
+            logger.error(f"Invalid option chain response for {symbol}. Response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
             raise ValueError(f"Invalid option chain response for {symbol}")
         
         logger.debug(

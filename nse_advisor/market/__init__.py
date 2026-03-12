@@ -35,6 +35,8 @@ from nse_advisor.market.circuit_breaker import (
 from nse_advisor.market.regime import (
     MarketRegime,
     RegimeClassification,
+    RegimeClassifier,
+    get_regime_classifier,
     RegimeDetector,
     get_regime_detector,
 )
@@ -68,6 +70,8 @@ __all__ = [
     # Regime
     "MarketRegime",
     "RegimeClassification",
+    "RegimeClassifier",
+    "get_regime_classifier",
     "RegimeDetector",
     "get_regime_detector",
 ]

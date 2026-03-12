@@ -317,6 +317,37 @@ class YFinanceFetcher:
         # Take last N candles
         return df.tail(count)
 
+    async def backfill_ohlcv(
+        self,
+        symbols: list[str],
+        period: str = "5d",
+        interval: str = "5m"
+    ) -> None:
+        """
+        Backfill OHLCV data for multiple symbols.
+        
+        Args:
+            symbols: List of underlying symbols
+            period: Data period
+            interval: Data interval
+        """
+        for symbol in symbols:
+            await self.fetch_historical_ohlcv(symbol, period, interval)
+
+    async def backfill_iv_history(
+        self,
+        symbols: list[str],
+        days: int = 252
+    ) -> None:
+        """
+        Backfill IV history for multiple symbols.
+        
+        Args:
+            symbols: List of symbols (usually ^INDIAVIX)
+            days: Number of days of history
+        """
+        for symbol in symbols:
+            await self.fetch_iv_history(symbol, days)
 
 # Global fetcher instance
 _yf_fetcher: YFinanceFetcher | None = None

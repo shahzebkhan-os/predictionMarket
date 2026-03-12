@@ -39,7 +39,7 @@ dependencies = [
     
     # Technical analysis
     "pandas>=2.1.0",
-    "pandas-ta>=0.3.14b",
+    "pandas-ta-remake",
     
     # Historical data
     "yfinance>=0.2.33",

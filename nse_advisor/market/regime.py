@@ -56,7 +56,7 @@ class RegimeClassification:
         return multipliers.get(self.regime, 0.5)
 
 
-class RegimeDetector:
+class RegimeClassifier:
     """
     Detects current market regime.
     
@@ -95,6 +95,11 @@ class RegimeDetector:
         self._settings = get_settings()
         self._last_regime: MarketRegime = MarketRegime.UNKNOWN
         self._vix_open: float | None = None
+        self._current_classification: RegimeClassification | None = None
+
+    def get_current_regime(self) -> RegimeClassification | None:
+        """Get the latest regime classification."""
+        return self._current_classification
     
     def classify(
         self,
@@ -185,8 +190,7 @@ class RegimeDetector:
             reasons.append("Early session - reduced confidence")
         
         self._last_regime = regime
-        
-        return RegimeClassification(
+        self._current_classification = RegimeClassification(
             regime=regime,
             confidence=min(1.0, confidence),
             reasons=reasons,
@@ -195,6 +199,8 @@ class RegimeDetector:
             volatility_score=volatility_score,
             range_score=range_score,
         )
+        
+        return self._current_classification
     
     def _calculate_trend_score(
         self,
@@ -308,13 +314,22 @@ class RegimeDetector:
         return min(1.0, score)
 
 
-# Global instance
-_regime_detector: RegimeDetector | None = None
+# Global instances
+_regime_classifier: RegimeClassifier | None = None
 
 
-def get_regime_detector() -> RegimeDetector:
-    """Get or create global regime detector."""
-    global _regime_detector
-    if _regime_detector is None:
-        _regime_detector = RegimeDetector()
-    return _regime_detector
+def get_regime_classifier() -> RegimeClassifier:
+    """Get or create global regime classifier."""
+    global _regime_classifier
+    if _regime_classifier is None:
+        _regime_classifier = RegimeClassifier()
+    return _regime_classifier
+
+
+# Alias for backward compatibility if needed
+RegimeDetector = RegimeClassifier
+
+
+def get_regime_detector() -> RegimeClassifier:
+    """Alias for get_regime_classifier."""
+    return get_regime_classifier()

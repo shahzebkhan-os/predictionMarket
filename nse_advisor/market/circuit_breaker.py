@@ -234,6 +234,15 @@ class CircuitBreakerDetector:
         """Force resume market (manual override)."""
         self._clear_halt()
 
+    # Aliases for backward compatibility
+    async def check(self) -> CircuitBreakerStatus:
+        """Alias for check_circuit_breaker."""
+        return await self.check_circuit_breaker()
+
+    def is_market_halted(self) -> bool:
+        """Alias for is_halted."""
+        return self.is_halted
+
 
 # Global instance
 _circuit_breaker: CircuitBreakerDetector | None = None

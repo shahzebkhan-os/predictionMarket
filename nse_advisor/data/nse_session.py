@@ -45,16 +45,19 @@ class NseSession:
     BASE_URL = "https://www.nseindia.com"
     
     HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
-        "Referer": "https://www.nseindia.com",
         "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
     }
     
     MAX_RETRIES = 3
@@ -93,31 +96,54 @@ class NseSession:
         """
         self._session = self._create_session()
         
-        try:
-            # Visit homepage to get session cookies
-            response = self._session.get(
-                self.BASE_URL,
-                timeout=10,
-                allow_redirects=True
-            )
-            response.raise_for_status()
-            
-            # Verify we have cookies
-            if not self._session.cookies:
-                raise NseSessionError("No cookies received from NSE homepage")
-            
-            self._last_refresh = datetime.now(self._ist)
-            logger.info(
-                "NSE session initialized",
-                extra={
-                    "cookies_count": len(self._session.cookies),
-                    "refresh_time": self._last_refresh.isoformat()
-                }
-            )
-            
-        except requests.RequestException as e:
-            self._session = None
-            raise NseSessionError(f"Failed to initialize NSE session: {e}") from e
+        # Try multiple endpoints to get cookies
+        urls = [
+            self.BASE_URL,
+            f"{self.BASE_URL}/option-chain",
+            f"{self.BASE_URL}/get-quotes/derivatives?symbol=NIFTY"
+        ]
+        
+        last_error = None
+        for url in urls:
+            try:
+                # Update Referer for subsequent attempts
+                if url != self.BASE_URL:
+                    self._session.headers.update({"Referer": self.BASE_URL})
+                
+                response = self._session.get(
+                    url,
+                    timeout=15,
+                    allow_redirects=True
+                )
+                
+                if response.status_code == 200 and self._session.cookies:
+                    self._last_refresh = datetime.now(self._ist)
+                    logger.info(
+                        "NSE session initialized",
+                        extra={
+                            "url": url,
+                            "cookies_count": len(self._session.cookies),
+                            "refresh_time": self._last_refresh.isoformat()
+                        }
+                    )
+                    # Small sleep to allow cookies to "settle"
+                    import time
+                    time.sleep(1)
+                    return
+                
+                logger.warning(f"Failed to get session from {url}: Status {response.status_code}")
+                
+            except requests.RequestException as e:
+                last_error = e
+                logger.warning(f"Connection error to {url}: {e}")
+                continue
+        
+        # If all attempts fail
+        self._session = None
+        error_msg = f"Failed to initialize NSE session after {len(urls)} attempts."
+        if last_error:
+            error_msg += f" Last error: {last_error}"
+        raise NseSessionError(error_msg)
     
     async def init_session(self) -> None:
         """Initialize session asynchronously."""
@@ -129,22 +155,21 @@ class NseSession:
         logger.info("Refreshing NSE session cookies")
         await self.init_session()
     
-    def _fetch_sync(self, url: str, timeout: int = 10) -> dict[str, Any]:
+    def _fetch_sync(self, url: str, timeout: int = 15) -> dict[str, Any]:
         """
-        Fetch data from NSE API synchronously with retry logic.
-        
-        Args:
-            url: Full URL to fetch
-            timeout: Request timeout in seconds
-            
-        Returns:
-            Parsed JSON response
-            
-        Raises:
-            NseSessionError: If all retries fail
+        Fetch data from NSE API synchronously with retry logic and header adjustments.
         """
         if self._session is None:
             raise NseSessionError("Session not initialized. Call init_session() first.")
+        
+        # Update headers for API call (CORS/JSON)
+        self._session.headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "Referer": "https://www.nseindia.com/option-chain",
+        })
         
         last_exception: Exception | None = None
         

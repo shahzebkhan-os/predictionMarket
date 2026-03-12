@@ -71,7 +71,7 @@ class InstrumentMaster:
         """Check if instruments are loaded."""
         return self._loaded
     
-    async def load_instruments(self) -> None:
+    async def refresh(self) -> None:
         """
         Load instrument data from NSE.
         
@@ -251,5 +251,5 @@ def get_instrument_master() -> InstrumentMaster:
 async def init_instrument_master() -> InstrumentMaster:
     """Initialize instrument master with data."""
     master = get_instrument_master()
-    await master.load_instruments()
+    await master.refresh()
     return master
