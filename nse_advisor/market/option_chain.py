@@ -520,3 +520,56 @@ def get_chain_builder() -> OptionChainBuilder:
     if _chain_builder is None:
         _chain_builder = OptionChainBuilder()
     return _chain_builder
+
+
+# Alias for backward compatibility with tests
+StrikeData = OptionStrike
+
+
+class OptionChainManager:
+    """
+    Manages option chain snapshots for multiple underlyings.
+    
+    Provides a high-level interface for fetching and caching chains.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize manager."""
+        self._builder = get_chain_builder()
+        self._ist = ZoneInfo("Asia/Kolkata")
+    
+    async def refresh(self, underlying: str) -> OptionChainSnapshot:
+        """
+        Refresh option chain for an underlying.
+        
+        Args:
+            underlying: Underlying symbol
+            
+        Returns:
+            Updated snapshot
+        """
+        return await self._builder.build_snapshot(underlying)
+    
+    def get_latest(self, underlying: str) -> OptionChainSnapshot | None:
+        """
+        Get the latest cached snapshot.
+        
+        Args:
+            underlying: Underlying symbol
+            
+        Returns:
+            Cached snapshot if available and valid
+        """
+        return self._builder.get_cached_snapshot(underlying)
+
+
+# Global manager instance
+_chain_manager: OptionChainManager | None = None
+
+
+def get_option_chain_manager() -> OptionChainManager:
+    """Get or create global option chain manager."""
+    global _chain_manager
+    if _chain_manager is None:
+        _chain_manager = OptionChainManager()
+    return _chain_manager

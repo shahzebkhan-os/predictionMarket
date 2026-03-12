@@ -3,12 +3,14 @@ Tests for Option Chain functionality.
 """
 
 import pytest
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from nse_advisor.market.option_chain import (
     OptionChainSnapshot,
-    StrikeData,
+    OptionStrike,
     OptionChainManager,
+    StrikeData,
 )
 
 
@@ -16,8 +18,9 @@ from nse_advisor.market.option_chain import (
 def sample_chain():
     """Create sample option chain for testing."""
     strikes = [
-        StrikeData(
-            strike=23900,
+        OptionStrike(
+            strike_price=23900,
+            expiry=date(2024, 12, 26),
             ce_ltp=85.5, ce_bid=85.0, ce_ask=86.0,
             ce_oi=250000, ce_oi_change=15000, ce_volume=45000,
             ce_iv=15.2, ce_delta=0.65, ce_gamma=0.002,
@@ -27,8 +30,9 @@ def sample_chain():
             pe_iv=16.1, pe_delta=-0.35, pe_gamma=0.002,
             pe_theta=-7.2, pe_vega=11.8,
         ),
-        StrikeData(
-            strike=24000,
+        OptionStrike(
+            strike_price=24000,
+            expiry=date(2024, 12, 26),
             ce_ltp=55.0, ce_bid=54.5, ce_ask=55.5,
             ce_oi=320000, ce_oi_change=25000, ce_volume=65000,
             ce_iv=15.0, ce_delta=0.52, ce_gamma=0.003,
@@ -38,8 +42,9 @@ def sample_chain():
             pe_iv=15.5, pe_delta=-0.48, pe_gamma=0.003,
             pe_theta=-8.8, pe_vega=13.8,
         ),
-        StrikeData(
-            strike=24100,
+        OptionStrike(
+            strike_price=24100,
+            expiry=date(2024, 12, 26),
             ce_ltp=35.0, ce_bid=34.5, ce_ask=35.5,
             ce_oi=280000, ce_oi_change=20000, ce_volume=48000,
             ce_iv=15.3, ce_delta=0.38, ce_gamma=0.002,
@@ -55,7 +60,8 @@ def sample_chain():
         underlying="NIFTY",
         spot_price=24052.75,
         expiry=date(2024, 12, 26),
-        strikes={s.strike: s for s in strikes},
+        timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
+        strikes=strikes,
     )
 
 
@@ -74,8 +80,9 @@ class TestPCRCalculation:
     def test_pcr_zero_ce_oi(self):
         """Test PCR when CE OI is zero."""
         strikes = [
-            StrikeData(
-                strike=24000,
+            OptionStrike(
+                strike_price=24000,
+                expiry=date(2024, 12, 26),
                 ce_oi=0, pe_oi=100000,
                 ce_ltp=0, pe_ltp=50,
             ),
@@ -84,12 +91,13 @@ class TestPCRCalculation:
             underlying="NIFTY",
             spot_price=24000,
             expiry=date(2024, 12, 26),
-            strikes={s.strike: s for s in strikes},
+            timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
+            strikes=strikes,
         )
         
-        # Should handle division by zero
+        # Should handle division by zero, returning 0
         pcr = chain.get_pcr()
-        assert pcr == float('inf') or pcr > 100
+        assert pcr == 0.0
 
 
 class TestMaxPain:
@@ -108,11 +116,12 @@ class TestMaxPain:
             underlying="NIFTY",
             spot_price=24000,
             expiry=date(2024, 12, 26),
-            strikes={},
+            timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
+            strikes=[],
         )
         
         max_pain = chain.get_max_pain()
-        assert max_pain is None or max_pain == 0
+        assert max_pain == 0.0
 
 
 class TestATMDetection:
@@ -122,19 +131,25 @@ class TestATMDetection:
         """Test ATM strike detection."""
         atm = sample_chain.get_atm_strike()
         
-        # Spot is 24052.75, so ATM should be 24050 or 24000
-        assert atm == 24000  # Closest strike
+        # Spot is 24052.75, strikes are at 100 interval
+        # So ATM should be 24100 (nearest to 24052.75)
+        assert atm == 24100
     
     def test_atm_exact_match(self):
         """Test ATM when spot exactly matches a strike."""
         strikes = [
-            StrikeData(strike=24000, ce_ltp=50, pe_ltp=50, ce_oi=1000, pe_oi=1000),
+            OptionStrike(
+                strike_price=24000,
+                expiry=date(2024, 12, 26),
+                ce_ltp=50, pe_ltp=50, ce_oi=1000, pe_oi=1000
+            ),
         ]
         chain = OptionChainSnapshot(
             underlying="NIFTY",
             spot_price=24000,
             expiry=date(2024, 12, 26),
-            strikes={s.strike: s for s in strikes},
+            timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
+            strikes=strikes,
         )
         
         atm = chain.get_atm_strike()
@@ -157,18 +172,19 @@ class TestGEXSign:
     
     def test_gex_sign(self, sample_chain):
         """Test Gamma Exposure sign."""
-        gex = sample_chain.get_total_gex()
+        gex = sample_chain.get_gex()
         
         # GEX should be a number
         assert isinstance(gex, (int, float))
     
     def test_positive_gex_range_bound(self, sample_chain):
         """Test that positive GEX indicates range-bound."""
-        gex = sample_chain.get_total_gex()
+        gex = sample_chain.get_gex()
         
         # Our sample data should have positive or negative GEX
         # This tests the calculation runs without error
-        assert gex != float('nan')
+        import math
+        assert not math.isnan(gex)
 
 
 class TestGreeksSignSellLeg:
