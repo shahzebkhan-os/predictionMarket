@@ -64,12 +64,18 @@ class InstrumentMaster:
         self._lot_sizes: dict[str, int] = dict(self.DEFAULT_LOT_SIZES)
         self._expiries: dict[str, list[date]] = {}
         self._last_refresh: datetime | None = None
+        self._last_downloaded: datetime | None = None
         self._loaded = False
     
     @property
     def is_loaded(self) -> bool:
         """Check if instruments are loaded."""
         return self._loaded
+    
+    @property
+    def last_downloaded(self) -> datetime | None:
+        """Get last download timestamp."""
+        return self._last_downloaded
     
     async def refresh(self) -> None:
         """
@@ -86,6 +92,7 @@ class InstrumentMaster:
                 await self._load_underlying_info(underlying, fetcher)
             
             self._last_refresh = datetime.now(self._ist)
+            self._last_downloaded = datetime.now(self._ist)
             self._loaded = True
             
             logger.info(
@@ -97,6 +104,16 @@ class InstrumentMaster:
             logger.error(f"Failed to load instruments: {e}")
             # Use defaults
             self._loaded = True
+    
+    async def refresh_master(self) -> None:
+        """
+        Refresh instrument master data.
+        
+        Called by APScheduler every Monday at 08:00 IST to pick up
+        new weekly contracts listed on Thursday.
+        """
+        logger.info("Refreshing instrument master")
+        await self.refresh()
     
     async def _load_underlying_info(
         self,

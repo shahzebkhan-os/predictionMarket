@@ -172,6 +172,41 @@ class ManualTrade:
         """Current days to expiry."""
         return (self.expiry - date.today()).days
     
+    def net_greeks(self) -> dict:
+        """
+        Calculate net portfolio Greeks for all legs.
+        
+        Greeks sign convention:
+        - py_vollib returns Greeks from BUYER perspective
+        - SELL legs have inverted Greeks: negative vega, positive theta
+        - This method correctly applies the multiplier
+        
+        For a short straddle:
+        - theta > 0 (earning theta decay)
+        - vega < 0 (loses on IV rise)
+        
+        Returns:
+            dict with delta, gamma, theta, vega
+        """
+        return {
+            "delta": sum(
+                leg.entry_delta * leg.greeks_multiplier * leg.quantity_lots
+                for leg in self.legs
+            ),
+            "gamma": sum(
+                leg.entry_gamma * leg.greeks_multiplier * leg.quantity_lots
+                for leg in self.legs
+            ),
+            "theta": sum(
+                leg.entry_theta * leg.greeks_multiplier * leg.quantity_lots
+                for leg in self.legs
+            ),
+            "vega": sum(
+                leg.entry_vega * leg.greeks_multiplier * leg.quantity_lots
+                for leg in self.legs
+            ),
+        }
+    
     def pnl_percentage(self) -> float:
         """P&L as percentage of max loss."""
         if self.max_loss > 0:

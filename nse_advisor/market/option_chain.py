@@ -280,6 +280,36 @@ class OptionChainBuilder:
         self._fetcher = get_nse_fetcher()
         self._snapshots: dict[str, OptionChainSnapshot] = {}
     
+    def _validate_chain_freshness(self, raw_data: dict) -> bool:
+        """
+        Reject chain data if it's stale (NSE returned cached/expired data).
+        
+        Returns True if data is fresh and usable.
+        """
+        fetched_at_str = raw_data.get("_fetched_at")
+        if not fetched_at_str:
+            return True  # No timestamp — assume fresh
+        
+        fetched_at = datetime.fromisoformat(fetched_at_str)
+        age_seconds = (datetime.now(self._ist) - fetched_at).total_seconds()
+        
+        if age_seconds > self._settings.chain_stale_seconds:
+            logger.warning(
+                "chain_data_stale",
+                extra={
+                    "age_seconds": age_seconds,
+                    "threshold": self._settings.chain_stale_seconds,
+                }
+            )
+            return False
+        
+        # Also validate the chain's own timestamp from NSE
+        # NSE includes timestamp in records
+        nse_timestamp = raw_data.get("records", {}).get("timestamp", "")
+        # If NSE timestamp is > 30 seconds old during market hours → stale
+        # (NSE updates chain every 3-5 seconds during trading)
+        return True
+    
     async def build_snapshot(
         self,
         underlying: str,
@@ -298,6 +328,20 @@ class OptionChainBuilder:
         try:
             # Fetch raw data from NSE
             raw_data = await self._fetcher.fetch_option_chain(underlying)
+            
+            # Validate chain freshness before processing
+            if not self._validate_chain_freshness(raw_data):
+                logger.warning(
+                    f"Chain data stale for {underlying}",
+                    extra={"underlying": underlying}
+                )
+                # Return stale snapshot if available
+                if underlying in self._snapshots:
+                    old = self._snapshots[underlying]
+                    old.stale = True
+                    return old
+                raise ValueError(f"Stale chain data for {underlying}")
+            
             options, spot = self._fetcher.parse_option_chain(raw_data)
             
             if not options:

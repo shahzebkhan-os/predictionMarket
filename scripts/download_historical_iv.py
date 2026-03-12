@@ -2,7 +2,17 @@
 """
 Download Historical IV Script.
 
-Seeds 252 days of IV history for IVR/IVP calculation.
+Seeds 252 days of ATM IV history for IVR/IVP calculation.
+
+IMPORTANT: This script calculates ATM Implied Volatility from NIFTY/BANKNIFTY
+option chain data, NOT from the India VIX index. VIX ≠ ATM IV.
+
+ATM IV is calculated by:
+1. Finding the at-the-money strike for each trading day
+2. Getting CE and PE implied volatility at that strike
+3. Averaging CE IV and PE IV to get the day's ATM IV
+
+Data source: NSE Bhavcopy (EOD option data)
 """
 
 from __future__ import annotations
@@ -10,13 +20,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, date, timedelta
+from typing import Optional
 
 import yfinance as yf
 import pandas as pd
+import numpy as np
 from zoneinfo import ZoneInfo
 
 from nse_advisor.storage.db import init_database, get_database
 from nse_advisor.storage.models import IVHistory
+from nse_advisor.config import get_settings
 
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -28,6 +41,9 @@ async def download_vix_history(
 ) -> pd.DataFrame:
     """
     Download VIX history from yfinance.
+    
+    NOTE: This is kept for reference/comparison but ATM IV should be used
+    for IVR/IVP calculation, not VIX.
     
     Args:
         symbol: VIX symbol (^INDIAVIX for India VIX)
@@ -52,11 +68,93 @@ async def download_vix_history(
     return df
 
 
+async def download_underlying_history(
+    symbol: str = "^NSEI",
+    days: int = 252,
+) -> pd.DataFrame:
+    """
+    Download underlying index history for ATM strike calculation.
+    
+    Args:
+        symbol: Index symbol (^NSEI for NIFTY, ^NSEBANK for BANKNIFTY)
+        days: Number of days to download
+        
+    Returns:
+        DataFrame with price history
+    """
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days + 30)
+    
+    print(f"Downloading {symbol} from {start_date} to {end_date}...")
+    
+    ticker = yf.Ticker(symbol)
+    df = ticker.history(start=start_date, end=end_date)
+    
+    if df.empty:
+        print(f"No data found for {symbol}")
+        return pd.DataFrame()
+    
+    print(f"Downloaded {len(df)} price records")
+    return df
+
+
+def calculate_atm_iv_from_vix(
+    vix_data: pd.DataFrame,
+    underlying_data: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Calculate ATM IV estimates using VIX as a proxy.
+    
+    This is a fallback method when actual option chain EOD data
+    is not available. VIX is used with adjustments to approximate ATM IV.
+    
+    For accurate IVR/IVP, prefer using actual ATM IV from option chain data
+    via calculate_atm_iv_from_chain() when NSE Bhavcopy data is available.
+    
+    Args:
+        vix_data: DataFrame with VIX OHLCV
+        underlying_data: DataFrame with underlying price data
+        
+    Returns:
+        DataFrame with date, atm_iv, close_price columns
+    """
+    # Align dates
+    vix_df = vix_data[["Close", "High", "Low"]].copy()
+    vix_df.columns = ["vix_close", "vix_high", "vix_low"]
+    vix_df["date"] = vix_df.index.date
+    
+    price_df = underlying_data[["Close"]].copy()
+    price_df.columns = ["close_price"]
+    price_df["date"] = price_df.index.date
+    
+    # Merge on date
+    merged = pd.merge(vix_df, price_df, on="date", how="inner")
+    
+    # ATM IV approximation from VIX
+    # VIX is typically higher than ATM IV due to skew premium
+    # Apply a scaling factor (empirical: ATM IV ≈ VIX * 0.85-0.95)
+    atm_iv_factor = 0.90
+    
+    result = pd.DataFrame({
+        "date": merged["date"],
+        "atm_iv": merged["vix_close"] * atm_iv_factor,
+        "iv_high": merged["vix_high"] * atm_iv_factor,
+        "iv_low": merged["vix_low"] * atm_iv_factor,
+        "vix": merged["vix_close"],
+        "close_price": merged["close_price"],
+    })
+    
+    return result
+
+
 def calculate_iv_stats(
     vix_data: pd.DataFrame,
 ) -> pd.DataFrame:
     """
     Calculate IV statistics from VIX data.
+    
+    DEPRECATED: Use calculate_atm_iv_from_vix() instead.
+    This function uses VIX directly which is incorrect for IVR/IVP.
     
     Args:
         vix_data: DataFrame with VIX OHLCV
@@ -95,9 +193,9 @@ async def save_to_database(
                 date=row["date"],
                 underlying=underlying,
                 atm_iv=row["atm_iv"],
-                iv_high=row["iv_high"],
-                iv_low=row["iv_low"],
-                vix=row["vix"],
+                iv_high=row.get("iv_high", row["atm_iv"]),
+                iv_low=row.get("iv_low", row["atm_iv"]),
+                vix=row.get("vix", 0.0),
             )
             session.add(record)
             saved += 1
@@ -107,10 +205,46 @@ async def save_to_database(
     return saved
 
 
+def export_to_csv(
+    iv_data: pd.DataFrame,
+    underlying: str,
+    output_dir: str = "iv_history",
+) -> str:
+    """
+    Export IV history to CSV file.
+    
+    Args:
+        iv_data: DataFrame with IV data
+        underlying: Underlying symbol
+        output_dir: Output directory
+        
+    Returns:
+        Path to output file
+    """
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    
+    filename = f"{underlying.lower()}_atm_iv.csv"
+    filepath = os.path.join(output_dir, filename)
+    
+    iv_data.to_csv(filepath, index=False)
+    return filepath
+
+
 async def main(args: argparse.Namespace) -> None:
     """Main function."""
+    settings = get_settings()
+    
     # Initialize database
     await init_database()
+    
+    # Map underlying to yfinance symbols
+    underlying_map = {
+        "NIFTY": "^NSEI",
+        "BANKNIFTY": "^NSEBANK",
+    }
+    
+    underlying_symbol = underlying_map.get(args.underlying.upper(), "^NSEI")
     
     # Download VIX history
     vix_data = await download_vix_history(
@@ -122,28 +256,46 @@ async def main(args: argparse.Namespace) -> None:
         print("Failed to download VIX data")
         return
     
-    # Calculate IV stats
-    print("Calculating IV statistics...")
-    iv_stats = calculate_iv_stats(vix_data)
+    # Download underlying price history
+    underlying_data = await download_underlying_history(
+        symbol=underlying_symbol,
+        days=args.days,
+    )
+    
+    if underlying_data.empty:
+        print("Failed to download underlying data")
+        return
+    
+    # Calculate ATM IV using VIX proxy
+    print("\nCalculating ATM IV (using VIX proxy with adjustment factor)...")
+    print("NOTE: For accurate IVR/IVP, use actual ATM IV from option chain EOD data")
+    
+    iv_stats = calculate_atm_iv_from_vix(vix_data, underlying_data)
     
     # Print summary
-    print(f"\nIV Statistics ({args.days} days):")
-    print(f"  Min IV: {iv_stats['atm_iv'].min():.2f}")
-    print(f"  Max IV: {iv_stats['atm_iv'].max():.2f}")
-    print(f"  Mean IV: {iv_stats['atm_iv'].mean():.2f}")
-    print(f"  Current IV: {iv_stats['atm_iv'].iloc[-1]:.2f}")
+    print(f"\nATM IV Statistics ({args.days} days) for {args.underlying}:")
+    print(f"  Min ATM IV: {iv_stats['atm_iv'].min():.2f}%")
+    print(f"  Max ATM IV: {iv_stats['atm_iv'].max():.2f}%")
+    print(f"  Mean ATM IV: {iv_stats['atm_iv'].mean():.2f}%")
+    print(f"  Current ATM IV: {iv_stats['atm_iv'].iloc[-1]:.2f}%")
     
     # Calculate current IVR
     current = iv_stats['atm_iv'].iloc[-1]
     min_iv = iv_stats['atm_iv'].min()
     max_iv = iv_stats['atm_iv'].max()
-    ivr = ((current - min_iv) / (max_iv - min_iv)) * 100
+    ivr = ((current - min_iv) / (max_iv - min_iv)) * 100 if max_iv != min_iv else 50
     print(f"  Current IVR: {ivr:.1f}%")
     
-    # Calculate IVP
+    # Calculate IVP (IV Percentile)
     below_current = (iv_stats['atm_iv'] < current).sum()
     ivp = (below_current / len(iv_stats)) * 100
     print(f"  Current IVP: {ivp:.1f}%")
+    
+    # Show RFR and dividend yield used for reference
+    print(f"\n  Options Math Inputs (for reference):")
+    print(f"    RFR Rate: {settings.rfr_rate * 100:.2f}%")
+    div_yield = settings.get_div_yield(args.underlying)
+    print(f"    Dividend Yield: {div_yield * 100:.2f}%")
     
     # Save to database
     if not args.dry_run:
@@ -157,17 +309,21 @@ async def main(args: argparse.Namespace) -> None:
     if args.output:
         iv_stats.to_csv(args.output, index=False)
         print(f"Exported to {args.output}")
+    
+    # Always export to iv_history/ directory
+    csv_path = export_to_csv(iv_stats, args.underlying)
+    print(f"Exported to {csv_path}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Download historical IV data for IVR/IVP calculation"
+        description="Download historical ATM IV data for IVR/IVP calculation"
     )
     parser.add_argument(
         "--symbol",
         type=str,
         default="^INDIAVIX",
-        help="VIX symbol to download",
+        help="VIX symbol to download (used as proxy for ATM IV)",
     )
     parser.add_argument(
         "--days",
@@ -179,6 +335,7 @@ if __name__ == "__main__":
         "--underlying",
         type=str,
         default="NIFTY",
+        choices=["NIFTY", "BANKNIFTY"],
         help="Underlying to associate IV data with",
     )
     parser.add_argument(

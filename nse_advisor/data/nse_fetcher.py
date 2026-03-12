@@ -3,6 +3,8 @@ NSE Data Fetcher.
 
 Fetches option chain, indices, ban list, FII/DII data from NSE APIs.
 All data is fetched through NSE session manager with proper cookies.
+
+Includes staleness guards and response validation per the anti-bot fix.
 """
 
 from __future__ import annotations
@@ -15,9 +17,11 @@ from typing import Any
 
 from zoneinfo import ZoneInfo
 
+from nse_advisor.config import get_settings
 from nse_advisor.data.nse_session import NseSession, get_nse_session
 
 logger = logging.getLogger(__name__)
+IST = ZoneInfo("Asia/Kolkata")
 
 
 @dataclass
@@ -73,6 +77,11 @@ class NseFetcher:
     - Holidays: /api/holiday-master?type=trading
     - FII/DII: /api/fiidiiTradeReact
     - Corporate Actions: /api/corporates-corporateActions
+    
+    All fetches include:
+    - Staleness guards: _fetched_at timestamp attached to responses
+    - Response validation: Expected schema verified before returning
+    - Caching for slow-update endpoints (FII/DII)
     """
     
     BASE_URL = "https://www.nseindia.com"
@@ -81,7 +90,7 @@ class NseFetcher:
     OPTION_CHAIN_INDEX_URL = "/api/option-chain-indices?symbol={symbol}"
     OPTION_CHAIN_EQUITY_URL = "/api/option-chain-equities?symbol={symbol}"
     ALL_INDICES_URL = "/api/allIndices"
-    FO_BAN_LIST_URL = "/api/equity-stockIndices?index=SECURITIES%20IN%20BAN%20PERIOD"
+    FO_BAN_LIST_URL = "/api/fo-banlist"
     HOLIDAY_URL = "/api/holiday-master?type=trading"
     FII_DII_URL = "/api/fiidiiTradeReact"
     CORP_ACTIONS_URL = "/api/corporates-corporateActions?index=equities"
@@ -89,7 +98,18 @@ class NseFetcher:
     def __init__(self, session: NseSession | None = None) -> None:
         """Initialize fetcher with NSE session."""
         self._session = session or get_nse_session()
-        self._ist = ZoneInfo("Asia/Kolkata")
+        self._settings = get_settings()
+        
+        # FII/DII cache (updates only once daily)
+        self._fii_cache: dict[str, Any] | None = None
+        self._fii_cached_at: datetime | None = None
+    
+    @property
+    def _fii_cache_age_hours(self) -> float:
+        """Get FII cache age in hours."""
+        if not self._fii_cached_at:
+            return float('inf')
+        return (datetime.now(IST) - self._fii_cached_at).total_seconds() / 3600
     
     async def fetch_option_chain(
         self,
@@ -104,7 +124,10 @@ class NseFetcher:
             is_index: True for index options, False for equity options
             
         Returns:
-            Raw option chain data from NSE
+            Raw option chain data from NSE with _fetched_at timestamp
+            
+        Raises:
+            ValueError: If response schema is unexpected
         """
         if is_index:
             url = self.BASE_URL + self.OPTION_CHAIN_INDEX_URL.format(symbol=symbol)
@@ -113,15 +136,21 @@ class NseFetcher:
         
         data = await self._session.fetch(url)
         
-        if not data or "records" not in data:
-            logger.error(f"Invalid option chain response for {symbol}. Response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
-            raise ValueError(f"Invalid option chain response for {symbol}")
+        # Validate structure — NSE API has known schema
+        if "records" not in data or "data" not in data.get("records", {}):
+            raise ValueError(
+                f"Unexpected option chain structure for {symbol}: {list(data.keys())}"
+            )
+        
+        # Attach fetch timestamp for staleness tracking downstream
+        data["_fetched_at"] = datetime.now(IST).isoformat()
         
         logger.debug(
             f"Fetched option chain for {symbol}",
             extra={
                 "strikes_count": len(data.get("records", {}).get("data", [])),
-                "underlying": data.get("records", {}).get("underlyingValue")
+                "underlying": data.get("records", {}).get("underlyingValue"),
+                "fetched_at": data["_fetched_at"],
             }
         )
         
@@ -193,9 +222,21 @@ class NseFetcher:
         return options, underlying_value
     
     async def fetch_all_indices(self) -> list[IndexData]:
-        """Fetch all NSE indices data."""
+        """
+        Fetch all NSE indices data.
+        
+        Returns:
+            List of IndexData for all NSE indices
+            
+        Raises:
+            ValueError: If response schema is unexpected
+        """
         url = self.BASE_URL + self.ALL_INDICES_URL
         data = await self._session.fetch(url)
+        
+        # Validate structure
+        if "data" not in data:
+            raise ValueError(f"Unexpected indices response: {list(data.keys())}")
         
         indices: list[IndexData] = []
         
@@ -210,7 +251,7 @@ class NseFetcher:
                     high=float(item.get("high", 0)),
                     low=float(item.get("low", 0)),
                     close=float(item.get("previousClose", 0)),
-                    timestamp=datetime.now(self._ist)
+                    timestamp=datetime.now(IST)
                 ))
             except (ValueError, TypeError) as e:
                 logger.warning(f"Failed to parse index data: {e}")
@@ -258,12 +299,17 @@ class NseFetcher:
         try:
             data = await self._session.fetch(url)
             
+            # Returns list of banned symbols
             banned_symbols: list[str] = []
-            for item in data:
-                if isinstance(item, dict):
-                    symbol = item.get("symbol", "")
-                    if symbol:
-                        banned_symbols.append(symbol)
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        symbol = item.get("symbol", "")
+                        if symbol:
+                            banned_symbols.append(symbol)
+            elif isinstance(data, dict):
+                # Alternative response format
+                banned_symbols = data.get("data", [])
             
             logger.info(f"Fetched ban list: {len(banned_symbols)} symbols banned")
             return banned_symbols
@@ -308,8 +354,14 @@ class NseFetcher:
         Fetch FII/DII trading data.
         
         Note: Available after 18:00 IST for previous trading day.
+        Uses cache to avoid redundant fetches (FII/DII only updates once daily).
         """
         url = self.BASE_URL + self.FII_DII_URL
+        
+        # FII/DII only updates once daily — use cache if fresh
+        if self._fii_cache and self._fii_cache_age_hours < 6:
+            logger.debug("Using cached FII/DII data")
+            return self._parse_fii_dii(self._fii_cache)
         
         try:
             data = await self._session.fetch(url)
@@ -317,22 +369,36 @@ class NseFetcher:
             if not data:
                 return None
             
-            # Find latest data
-            latest = data[0] if data else {}
+            # Update cache
+            self._fii_cache = data
+            self._fii_cached_at = datetime.now(IST)
             
-            return FiiDiiData(
-                date=date.today(),
-                fii_buy_value=float(latest.get("fii_buy_value", 0)),
-                fii_sell_value=float(latest.get("fii_sell_value", 0)),
-                fii_net_value=float(latest.get("fii_net_value", 0)),
-                dii_buy_value=float(latest.get("dii_buy_value", 0)),
-                dii_sell_value=float(latest.get("dii_sell_value", 0)),
-                dii_net_value=float(latest.get("dii_net_value", 0)),
-            )
+            return self._parse_fii_dii(data)
             
         except Exception as e:
             logger.warning(f"Failed to fetch FII/DII data: {e}")
             return None
+    
+    def _parse_fii_dii(self, data: Any) -> FiiDiiData | None:
+        """Parse FII/DII response."""
+        if not data:
+            return None
+        
+        # Find latest data
+        latest = data[0] if isinstance(data, list) and data else {}
+        
+        if not latest:
+            return None
+        
+        return FiiDiiData(
+            date=date.today(),
+            fii_buy_value=float(latest.get("fii_buy_value", 0) or 0),
+            fii_sell_value=float(latest.get("fii_sell_value", 0) or 0),
+            fii_net_value=float(latest.get("fii_net_value", 0) or 0),
+            dii_buy_value=float(latest.get("dii_buy_value", 0) or 0),
+            dii_sell_value=float(latest.get("dii_sell_value", 0) or 0),
+            dii_net_value=float(latest.get("dii_net_value", 0) or 0),
+        )
 
 
 # Global fetcher instance
