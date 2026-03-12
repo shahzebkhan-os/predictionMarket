@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  advisor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nse-advisor
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://advisor:advisor@postgres:5432/nse_advisor
+      - REDIS_URL=redis://redis:6379/0
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - INDMONEY_BEARER_TOKEN=${INDMONEY_BEARER_TOKEN:-}
+      - PAPER_CAPITAL=${PAPER_CAPITAL:-500000}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nse-network
+    command: python -m nse_advisor.main
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nse-dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://advisor:advisor@postgres:5432/nse_advisor
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - nse-network
+    command: streamlit run nse_advisor/dashboard/streamlit_app.py --server.port 8501 --server.headless true
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: nse-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=advisor
+      - POSTGRES_PASSWORD=advisor
+      - POSTGRES_DB=nse_advisor
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - nse-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U advisor -d nse_advisor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nse-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - nse-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  nse-network:
+    driver: bridge
