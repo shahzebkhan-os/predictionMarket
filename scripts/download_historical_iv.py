@@ -34,6 +34,14 @@ from nse_advisor.config import get_settings
 
 IST = ZoneInfo("Asia/Kolkata")
 
+# Constants for IV calculations
+# VIX to ATM IV conversion factor (empirical: ATM IV ≈ VIX * 0.85-0.95)
+# VIX is typically higher than ATM IV due to skew premium
+VIX_TO_ATM_IV_FACTOR = 0.90
+
+# Default IVR when max_iv equals min_iv (no volatility range)
+DEFAULT_IVR = 50.0
+
 
 async def download_vix_history(
     symbol: str = "^INDIAVIX",
@@ -132,14 +140,11 @@ def calculate_atm_iv_from_vix(
     
     # ATM IV approximation from VIX
     # VIX is typically higher than ATM IV due to skew premium
-    # Apply a scaling factor (empirical: ATM IV ≈ VIX * 0.85-0.95)
-    atm_iv_factor = 0.90
-    
     result = pd.DataFrame({
         "date": merged["date"],
-        "atm_iv": merged["vix_close"] * atm_iv_factor,
-        "iv_high": merged["vix_high"] * atm_iv_factor,
-        "iv_low": merged["vix_low"] * atm_iv_factor,
+        "atm_iv": merged["vix_close"] * VIX_TO_ATM_IV_FACTOR,
+        "iv_high": merged["vix_high"] * VIX_TO_ATM_IV_FACTOR,
+        "iv_low": merged["vix_low"] * VIX_TO_ATM_IV_FACTOR,
         "vix": merged["vix_close"],
         "close_price": merged["close_price"],
     })
@@ -178,12 +183,22 @@ async def save_to_database(
     Save IV history to database.
     
     Args:
-        iv_data: DataFrame with IV data
+        iv_data: DataFrame with IV data. Required columns: date, atm_iv.
+                 Optional columns: iv_high, iv_low, vix
         underlying: Underlying symbol
         
     Returns:
         Number of records saved
+        
+    Raises:
+        KeyError: If required columns (date, atm_iv) are missing
     """
+    # Validate required columns
+    required_cols = ["date", "atm_iv"]
+    missing_cols = [col for col in required_cols if col not in iv_data.columns]
+    if missing_cols:
+        raise KeyError(f"Missing required columns: {missing_cols}")
+    
     db = get_database()
     saved = 0
     
@@ -283,7 +298,7 @@ async def main(args: argparse.Namespace) -> None:
     current = iv_stats['atm_iv'].iloc[-1]
     min_iv = iv_stats['atm_iv'].min()
     max_iv = iv_stats['atm_iv'].max()
-    ivr = ((current - min_iv) / (max_iv - min_iv)) * 100 if max_iv != min_iv else 50
+    ivr = ((current - min_iv) / (max_iv - min_iv)) * 100 if max_iv != min_iv else DEFAULT_IVR
     print(f"  Current IVR: {ivr:.1f}%")
     
     # Calculate IVP (IV Percentile)
