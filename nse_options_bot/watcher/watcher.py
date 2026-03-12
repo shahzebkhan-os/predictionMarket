@@ -368,14 +368,19 @@ class TradeWatcher:
         tracker = self._greeks_trackers.get(trade.trade_id)
         entry_iv = 0.0
         current_iv = 0.0
-        if tracker and tracker._snapshots:
-            first_leg_greeks = list(tracker._snapshots[0].leg_greeks.values())
-            if first_leg_greeks:
-                entry_iv = first_leg_greeks[0].get("iv", 0)
+        if tracker:
+            first_snapshot = tracker.get_first_snapshot()
+            last_snapshot = tracker.get_last_snapshot()
 
-            last_leg_greeks = list(tracker._snapshots[-1].leg_greeks.values())
-            if last_leg_greeks:
-                current_iv = last_leg_greeks[0].get("iv", 0)
+            if first_snapshot:
+                first_leg_greeks = list(first_snapshot.leg_greeks.values())
+                if first_leg_greeks:
+                    entry_iv = first_leg_greeks[0].get("iv", 0)
+
+            if last_snapshot:
+                last_leg_greeks = list(last_snapshot.leg_greeks.values())
+                if last_leg_greeks:
+                    current_iv = last_leg_greeks[0].get("iv", 0)
 
         dte = self._calendar.days_to_expiry(trade.underlying)
         current_regime = self._current_regime.name if self._current_regime else ""

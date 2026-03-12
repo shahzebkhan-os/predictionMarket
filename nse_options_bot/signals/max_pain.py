@@ -172,7 +172,7 @@ class MaxPainGEXAnalyzer:
 
         # Find high gamma strikes
         high_gamma_strikes = []
-        for strike, strike_data in chain._chain.items():
+        for strike, strike_data in chain.iter_strikes():
             strike_gex = 0.0
             if strike_data.ce and strike_data.ce.oi > 0:
                 strike_gex += strike_data.ce.greeks.gamma * strike_data.ce.oi

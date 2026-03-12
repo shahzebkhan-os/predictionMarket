@@ -127,7 +127,7 @@ class GreeksAnalyzer:
         total_theta = 0.0
         total_vega = 0.0
 
-        for strike, strike_data in chain._chain.items():
+        for strike, strike_data in chain.iter_strikes():
             if strike_data.ce and strike_data.ce.oi > 0:
                 weight = strike_data.ce.oi * strike_data.ce.lot_size
                 total_ce_delta += strike_data.ce.greeks.delta * weight

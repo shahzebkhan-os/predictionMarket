@@ -200,7 +200,7 @@ class OIAnalyzer:
         total_ce_oi = 0
         total_pe_oi = 0
 
-        for strike, strike_data in chain._chain.items():
+        for strike, strike_data in chain.iter_strikes():
             if strike_data.ce:
                 total_ce_oi += strike_data.ce.oi
                 ce_oi_change += strike_data.ce.oi_change

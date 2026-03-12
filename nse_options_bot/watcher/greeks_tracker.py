@@ -78,6 +78,35 @@ class GreeksTracker:
         self._delta_drifts: list[DeltaDriftRecord] = []
         self._initial_greeks: dict[str, dict[str, float]] = {}
 
+    @property
+    def snapshot_count(self) -> int:
+        """Get number of snapshots."""
+        return len(self._snapshots)
+
+    def get_first_snapshot(self) -> GreeksSnapshot | None:
+        """Get first snapshot.
+
+        Returns:
+            First snapshot or None
+        """
+        return self._snapshots[0] if self._snapshots else None
+
+    def get_last_snapshot(self) -> GreeksSnapshot | None:
+        """Get last snapshot.
+
+        Returns:
+            Last snapshot or None
+        """
+        return self._snapshots[-1] if self._snapshots else None
+
+    def get_snapshots(self) -> list[GreeksSnapshot]:
+        """Get all snapshots.
+
+        Returns:
+            List of snapshots
+        """
+        return list(self._snapshots)
+
     def take_snapshot(
         self,
         trade: OptionsTradeState,

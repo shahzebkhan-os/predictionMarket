@@ -148,7 +148,7 @@ class IVAnalyzer:
 
         # Get ATM IV from near chain
         atm_strike = near_chain.get_atm_strike()
-        near_strike_data = near_chain._chain.get(atm_strike)
+        near_strike_data = near_chain.get_strike_data(atm_strike)
 
         current_iv = 0.0
         if near_strike_data:
@@ -176,7 +176,7 @@ class IVAnalyzer:
 
         if far_chain:
             far_atm = far_chain.get_atm_strike()
-            far_strike_data = far_chain._chain.get(far_atm)
+            far_strike_data = far_chain.get_strike_data(far_atm)
             if far_strike_data:
                 far_ce_iv = far_strike_data.ce.iv if far_strike_data.ce else 0
                 far_pe_iv = far_strike_data.pe.iv if far_strike_data.pe else 0
@@ -298,7 +298,7 @@ class IVAnalyzer:
         """
         underlying = chain.underlying
         atm_strike = chain.get_atm_strike()
-        strike_data = chain._chain.get(atm_strike)
+        strike_data = chain.get_strike_data(atm_strike)
 
         current_iv = 0.0
         if strike_data:

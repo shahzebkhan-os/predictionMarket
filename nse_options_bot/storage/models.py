@@ -5,7 +5,7 @@ Database models for trades, signals, events, etc.
 
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -25,6 +25,11 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+def utc_now() -> datetime:
+    """Get current UTC datetime (timezone-aware)."""
+    return datetime.now(timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -80,8 +85,8 @@ class Trade(Base):
     status = Column(String(20), default="OPEN")
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=utc_now)
 
     # Relationships
     legs = relationship("TradeLeg", back_populates="trade", cascade="all, delete-orphan")
@@ -234,7 +239,7 @@ class DailyStats(Base):
     strategy_counts = Column(JSON)
 
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
 
 
 class OptionChainCache(Base):
@@ -317,5 +322,5 @@ class SystemConfig(Base):
 
     key = Column(String(100), primary_key=True)
     value = Column(JSON, nullable=False)
-    updated_at = Column(DateTime(timezone=True), onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), onupdate=utc_now)
     description = Column(Text)

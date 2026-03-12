@@ -811,3 +811,31 @@ class OptionChainSnapshot:
             "last_refresh": self._last_refresh.isoformat() if self._last_refresh else None,
             "num_strikes": len(self._chain),
         }
+
+    def get_strikes(self) -> list[Decimal]:
+        """Get all strike prices.
+
+        Returns:
+            Sorted list of strikes
+        """
+        return sorted(self._chain.keys())
+
+    def get_strike_data(self, strike: Decimal) -> OptionChainStrike | None:
+        """Get data for a specific strike.
+
+        Args:
+            strike: Strike price
+
+        Returns:
+            OptionChainStrike or None
+        """
+        return self._chain.get(strike)
+
+    def iter_strikes(self):
+        """Iterate over all strikes.
+
+        Yields:
+            Tuple of (strike, OptionChainStrike)
+        """
+        for strike in sorted(self._chain.keys()):
+            yield strike, self._chain[strike]
