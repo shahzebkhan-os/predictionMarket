@@ -67,6 +67,54 @@ class Settings(BaseSettings):
         le=30,
         description="NSE session cookie refresh interval"
     )
+    ticker_stale_seconds: int = Field(
+        default=15,
+        ge=5,
+        le=60,
+        description="Alert if no price update for this long"
+    )
+    circuit_breaker_flat_minutes: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Minutes of no price change before halt suspected"
+    )
+    
+    # ===== NSE Session =====
+    nse_max_retries: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum retries for NSE API calls"
+    )
+    nse_rate_limit_backoff_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=300,
+        description="Backoff time after NSE 429 response"
+    )
+    nse_ip_ban_backoff_seconds: int = Field(
+        default=3600,
+        ge=1800,
+        le=21600,
+        description="Backoff time after NSE IP ban (1-6 hours)"
+    )
+    nse_health_check_interval_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=900,
+        description="NSE session health check interval (5 min)"
+    )
+    use_playwright_fallback: bool = Field(
+        default=False,
+        description="Use Playwright for NSE fetches (slower, for IP bans)"
+    )
+    
+    # ===== Paper Trading =====
+    paper_trading: bool = Field(
+        default=True,
+        description="True = paper mode, False = live tracking"
+    )
     
     # ===== Options Math =====
     rfr_rate: float = Field(

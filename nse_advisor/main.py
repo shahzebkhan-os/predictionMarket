@@ -473,7 +473,7 @@ class NseAdvisor:
             await asyncio.sleep(refresh_interval)
             
             try:
-                await session.refresh()
+                await session.refresh_session()
                 logger.debug("NSE session refreshed")
                 get_event_log().log(EventType.NSE_SESSION_REFRESHED, {})
             except Exception as e:
